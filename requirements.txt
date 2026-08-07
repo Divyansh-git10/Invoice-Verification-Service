@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+
+# OCR (V1: local, self-contained — no cloud credentials required)
+pytesseract
+Pillow
+PyMuPDF
