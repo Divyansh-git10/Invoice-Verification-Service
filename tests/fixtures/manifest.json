@@ -1,0 +1,220 @@
+{
+  "generated_at": "2026-08-07",
+  "currency": "INR",
+  "locale": "en-IN",
+  "count": 15,
+  "note": "expected_total is the ground-truth invoice total a correct extractor should return (canonical decimal string). null means no identifiable total exists.",
+  "invoices": [
+    {
+      "id": "invoice_01",
+      "file": "invoices/invoice_01.png",
+      "mime_type": "image/png",
+      "vendor": "Bharat Steel Traders",
+      "font": "sans",
+      "layout": "classic",
+      "total_label": "Grand Total",
+      "gst_rate_percent": 18,
+      "expected_total": "30798.00",
+      "edge_cases": [
+        "clean"
+      ]
+    },
+    {
+      "id": "invoice_02",
+      "file": "invoices/invoice_02.png",
+      "mime_type": "image/png",
+      "vendor": "Ganesh Electronics",
+      "font": "serif",
+      "layout": "classic",
+      "total_label": "Total Amount",
+      "gst_rate_percent": 12,
+      "expected_total": "69664.00",
+      "edge_cases": [
+        "clean"
+      ]
+    },
+    {
+      "id": "invoice_03",
+      "file": "invoices/invoice_03.pdf",
+      "mime_type": "application/pdf",
+      "vendor": "Krishna Textiles Pvt Ltd",
+      "font": "mono",
+      "layout": "compact",
+      "total_label": "Invoice Total",
+      "gst_rate_percent": 5,
+      "expected_total": "28980.00",
+      "edge_cases": [
+        "clean"
+      ]
+    },
+    {
+      "id": "invoice_04",
+      "file": "invoices/invoice_04.png",
+      "mime_type": "image/png",
+      "vendor": "Surya Hardware & Tools",
+      "font": "cond",
+      "layout": "classic",
+      "total_label": "Amount Payable",
+      "gst_rate_percent": 18,
+      "expected_total": "29134.20",
+      "edge_cases": [
+        "clean"
+      ]
+    },
+    {
+      "id": "invoice_05",
+      "file": "invoices/invoice_05.png",
+      "mime_type": "image/png",
+      "vendor": "Deccan Auto Parts",
+      "font": "sans",
+      "layout": "classic",
+      "total_label": "Grand Total",
+      "gst_rate_percent": 18,
+      "expected_total": "82600.00",
+      "edge_cases": [
+        "subtotal_gt_total"
+      ]
+    },
+    {
+      "id": "invoice_06",
+      "file": "invoices/invoice_06.png",
+      "mime_type": "image/png",
+      "vendor": "Himalaya Pharma Distributors",
+      "font": "serif",
+      "layout": "modern",
+      "total_label": "Total Amount",
+      "gst_rate_percent": 18,
+      "expected_total": "82098.50",
+      "edge_cases": [
+        "multiple_values"
+      ]
+    },
+    {
+      "id": "invoice_07",
+      "file": "invoices/invoice_07.png",
+      "mime_type": "image/png",
+      "vendor": "Konark Machine Works",
+      "font": "mono",
+      "layout": "classic",
+      "total_label": "Grand Total",
+      "gst_rate_percent": 18,
+      "expected_total": "212400.00",
+      "edge_cases": [
+        "comma_lakh"
+      ]
+    },
+    {
+      "id": "invoice_08",
+      "file": "invoices/invoice_08.pdf",
+      "mime_type": "application/pdf",
+      "vendor": "Sagar Marine Supplies",
+      "font": "cond",
+      "layout": "classic",
+      "total_label": "Amount Payable",
+      "gst_rate_percent": 18,
+      "expected_total": "20229.33",
+      "edge_cases": [
+        "decimals"
+      ]
+    },
+    {
+      "id": "invoice_09",
+      "file": "invoices/invoice_09.png",
+      "mime_type": "image/png",
+      "vendor": "Deccan Auto Parts",
+      "font": "sans",
+      "layout": "classic",
+      "total_label": "Grand Total",
+      "gst_rate_percent": 18,
+      "expected_total": "55696.00",
+      "edge_cases": [
+        "rotated"
+      ]
+    },
+    {
+      "id": "invoice_10",
+      "file": "invoices/invoice_10.png",
+      "mime_type": "image/png",
+      "vendor": "Rajdhani Stationers",
+      "font": "serif",
+      "layout": "classic",
+      "total_label": "Invoice Total",
+      "gst_rate_percent": 12,
+      "expected_total": "42000.00",
+      "edge_cases": [
+        "noisy"
+      ]
+    },
+    {
+      "id": "invoice_11",
+      "file": "invoices/invoice_11.png",
+      "mime_type": "image/png",
+      "vendor": "Coastal Seafoods Ltd",
+      "font": "mono",
+      "layout": "classic",
+      "total_label": "Total Amount",
+      "gst_rate_percent": 5,
+      "expected_total": "144900.00",
+      "edge_cases": [
+        "blurred"
+      ]
+    },
+    {
+      "id": "invoice_12",
+      "file": "invoices/invoice_12.png",
+      "mime_type": "image/png",
+      "vendor": "Nilgiri Logistics",
+      "font": "cond",
+      "layout": "delivery",
+      "total_label": null,
+      "gst_rate_percent": 0,
+      "expected_total": null,
+      "edge_cases": [
+        "no_total"
+      ]
+    },
+    {
+      "id": "invoice_13",
+      "file": "invoices/invoice_13.png",
+      "mime_type": "image/png",
+      "vendor": "Aravalli Cement Depot",
+      "font": "sans",
+      "layout": "modern",
+      "total_label": "Grand Total",
+      "gst_rate_percent": 18,
+      "expected_total": "206500.00",
+      "edge_cases": [
+        "comma_lakh"
+      ]
+    },
+    {
+      "id": "invoice_14",
+      "file": "invoices/invoice_14.png",
+      "mime_type": "image/png",
+      "vendor": "Vidarbha Power Systems",
+      "font": "serif",
+      "layout": "classic",
+      "total_label": "Amount Payable",
+      "gst_rate_percent": 18,
+      "expected_total": "1062000.00",
+      "edge_cases": [
+        "comma_lakh"
+      ]
+    },
+    {
+      "id": "invoice_15",
+      "file": "invoices/invoice_15.png",
+      "mime_type": "image/png",
+      "vendor": "Brahmaputra Tea Estate",
+      "font": "mono",
+      "layout": "classic",
+      "total_label": "Invoice Total",
+      "gst_rate_percent": 18,
+      "expected_total": "198240.00",
+      "edge_cases": [
+        "rotated",
+        "noisy"
+      ]
+    }
+  ]
+}
