@@ -50,6 +50,8 @@ _SUBORDINATE_MARKERS = (
     "taxable",
     "total tax",
     "tax amount",
+    "total sale",
+    "total sales",
     "cgst",
     "sgst",
     "igst",
@@ -99,6 +101,12 @@ _WORD_SCALES = {
 
 # Trigger phrase: "... in words" / "... in word".
 _WORDS_TRIGGER = re.compile(r"in\s+words?\b", re.IGNORECASE)
+# Strong conventional total-in-words phrase without an explicit "in words"
+# label: a currency token, then number words, terminated by "only"
+# (e.g. "Rs. One Lakh Five Thousand Two Hundred Only", "INR ... Only").
+_WORDS_CURRENCY_ANCHOR = re.compile(
+    r"(?:₹|rs\.?|rupees|inr)\s+(.*?)\bonly\b", re.IGNORECASE
+)
 # Split camelCase / PascalCase runs like "ThirtyEight" -> "Thirty Eight".
 _CAMEL_SPLIT = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
@@ -280,12 +288,18 @@ class InvoiceAmountExtractor:
         return None
 
     def _amount_from_words(self, text: str) -> Optional[Decimal]:
-        """Find an amount written in words following an 'in words' label.
+        """Find an amount written in words. Fallback only; returns None if
+        nothing parses.
 
-        The number words may be on the same line as the label or on the
-        following line (a label-only line). Returns None if nothing parses.
+        Two deterministic detectors, tried in order:
+          1. an explicit "... in words" label (words on the same line, or a
+             following line for a label-only line);
+          2. a strong currency-anchored phrase terminated by "only"
+             (e.g. "Rs. One Lakh Five Thousand Two Hundred Only").
         """
         lines = text.splitlines()
+
+        # 1) Explicit "... in words" label.
         for i, line in enumerate(lines):
             match = _WORDS_TRIGGER.search(line)
             if not match:
@@ -314,6 +328,20 @@ class InvoiceAmountExtractor:
                     return value
                 if appended >= 2:
                     break
+
+        # 2) Currency-anchored "... Only" phrase (no explicit label needed).
+        for line in lines:
+            anchor = _WORDS_CURRENCY_ANCHOR.search(line)
+            if not anchor:
+                continue
+            value = words_to_amount(anchor.group(1))
+            if value is not None:
+                logger.info(
+                    "Identified invoice total from currency-anchored "
+                    "amount-in-words: %s",
+                    value,
+                )
+                return value
 
         return None
 
