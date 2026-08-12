@@ -19,9 +19,14 @@ from app.utils.amount_normalizer import AmountNormalizer
 logger = get_logger(__name__)
 
 
-# Keywords that mark the invoice total, in priority order (most specific
-# first). The extractor prefers the highest-priority keyword present.
+# Final-total labels in priority order (most explicit final total first). The
+# extractor prefers the highest-priority label present. Explicit final-amount
+# labels ("invoice amount", "invoice total") intentionally outrank calculated
+# roll-ups such as "total amount(s)", so a printed final amount beats a
+# lower-level computed total (see Case A in Component 6).
 _TOTAL_KEYWORDS = (
+    "invoice amount",
+    "invoice total",
     "grand total",
     "total amount payable",
     "total payable",
@@ -31,8 +36,23 @@ _TOTAL_KEYWORDS = (
     "amount due",
     "net amount",
     "total amount",
-    "invoice total",
     "total",
+)
+
+# Lower-level financial labels. A line carrying one of these must NOT win the
+# total just because it also contains the generic word "total" (e.g.
+# "Sub-Total", "Total Tax"). Such lines are skipped when the only matching
+# keyword is the generic "total".
+_SUBORDINATE_MARKERS = (
+    "sub total",
+    "sub-total",
+    "subtotal",
+    "taxable",
+    "total tax",
+    "tax amount",
+    "cgst",
+    "sgst",
+    "igst",
 )
 
 # Loose money token: used on lines already identified by a total keyword,
@@ -54,6 +74,79 @@ _STRICT_AMOUNT = re.compile(
     r"(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+\.\d{2})",
     re.IGNORECASE,
 )
+
+# --- Amount-in-words support ----------------------------------------------
+# Deterministic, local English number-word parsing for invoice totals printed
+# in words (e.g. "Total in words: FOUR THOUSAND ... NINETY RUPEES"). No LLM,
+# no external calls. Supports units/tens/hundred and Indian + Western scales.
+_WORD_UNITS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}
+_WORD_TENS = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_WORD_SCALES = {
+    "thousand": 1_000,
+    "lakh": 100_000, "lakhs": 100_000, "lac": 100_000, "lacs": 100_000,
+    "million": 1_000_000,
+    "crore": 10_000_000, "crores": 10_000_000,
+    "billion": 1_000_000_000,
+}
+
+# Trigger phrase: "... in words" / "... in word".
+_WORDS_TRIGGER = re.compile(r"in\s+words?\b", re.IGNORECASE)
+# Split camelCase / PascalCase runs like "ThirtyEight" -> "Thirty Eight".
+_CAMEL_SPLIT = re.compile(r"(?<=[a-z])(?=[A-Z])")
+
+
+def words_to_amount(phrase: str) -> Optional[Decimal]:
+    """Parse an English amount-in-words phrase into a Decimal, or None.
+
+    Deterministic and conservative: returns None (rather than guessing) when
+    the phrase contains no recognizable number words. Non-number tokens
+    ("rupees", "and", "only", ...) are ignored. Reads up to the word "only"
+    if present (a common terminator).
+
+    Examples:
+        "FOUR THOUSAND FOUR HUNDRED AND NINETY RUPEES" -> Decimal("4490.00")
+        "Rupees ThirtyEight Thousand TwentySix Only"   -> Decimal("38026.00")
+    """
+    if not phrase:
+        return None
+
+    spaced = _CAMEL_SPLIT.sub(" ", phrase)
+    tokens = [t.lower() for t in re.split(r"[^A-Za-z]+", spaced) if t]
+    if "only" in tokens:
+        tokens = tokens[: tokens.index("only")]
+
+    total = 0
+    current = 0
+    found = False
+    for token in tokens:
+        if token in _WORD_UNITS:
+            current += _WORD_UNITS[token]
+            found = True
+        elif token in _WORD_TENS:
+            current += _WORD_TENS[token]
+            found = True
+        elif token == "hundred":
+            current = (current or 1) * 100
+            found = True
+        elif token in _WORD_SCALES:
+            current = (current or 1) * _WORD_SCALES[token]
+            total += current
+            current = 0
+            found = True
+        # Any other token (rupees, and, of, etc.) is ignored.
+
+    total += current
+    if not found or total <= 0:
+        return None
+    return Decimal(total).quantize(Decimal("0.01"))
 
 
 class InvoiceAmountExtractor:
@@ -152,6 +245,13 @@ class InvoiceAmountExtractor:
             lowered = line.lower()
             for priority, keyword in enumerate(_TOTAL_KEYWORDS):
                 if keyword in lowered:
+                    # A subordinate line (sub-total, tax, cgst...) must not win
+                    # via the generic "total" keyword.
+                    if keyword == "total" and any(
+                        marker in lowered for marker in _SUBORDINATE_MARKERS
+                    ):
+                        break
+
                     amounts = self._amounts_in(line, _LOOSE_AMOUNT)
                     if amounts and (
                         best_priority is None or priority < best_priority
@@ -165,11 +265,55 @@ class InvoiceAmountExtractor:
         if best_amount is not None:
             return best_amount
 
+        # Amount-in-words fallback: used only when no labelled numeric total
+        # was found, so it never overrides a reliable printed figure.
+        worded = self._amount_from_words(text)
+        if worded is not None:
+            return worded
+
         # Keyword-less fallback: the largest clearly-monetary figure found.
         fallback = self._amounts_in(text, _STRICT_AMOUNT)
         if fallback:
             logger.info("No total keyword found; using largest monetary value")
             return max(fallback)
+
+        return None
+
+    def _amount_from_words(self, text: str) -> Optional[Decimal]:
+        """Find an amount written in words following an 'in words' label.
+
+        The number words may be on the same line as the label or on the
+        following line (a label-only line). Returns None if nothing parses.
+        """
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            match = _WORDS_TRIGGER.search(line)
+            if not match:
+                continue
+
+            segment = line[match.end():]
+            value = words_to_amount(segment)
+            if value is not None:
+                logger.info("Identified invoice total from amount-in-words: %s", value)
+                return value
+
+            # Words may sit on a following line (possibly after blank lines).
+            # Append the next few non-empty lines and retry.
+            appended = 0
+            for nxt in lines[i + 1:]:
+                nxt = nxt.strip()
+                if not nxt:
+                    continue
+                segment = f"{segment} {nxt}"
+                appended += 1
+                value = words_to_amount(segment)
+                if value is not None:
+                    logger.info(
+                        "Identified invoice total from amount-in-words: %s", value
+                    )
+                    return value
+                if appended >= 2:
+                    break
 
         return None
 
