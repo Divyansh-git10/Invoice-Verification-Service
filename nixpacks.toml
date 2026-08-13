@@ -1,0 +1,9 @@
+# Railway (Nixpacks) build configuration.
+# The only system dependency is the Tesseract OCR binary; the apt package
+# includes the English language data. Everything else (FastAPI, pytesseract,
+# Pillow, PyMuPDF) installs from requirements.txt as normal Python wheels.
+[phases.setup]
+aptPkgs = ["tesseract-ocr"]
+
+[start]
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"

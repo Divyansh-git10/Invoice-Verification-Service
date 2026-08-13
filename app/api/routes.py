@@ -18,10 +18,8 @@ from app.validators.amount_validator import AmountValidator
 router = APIRouter(prefix="/verify", tags=["Invoice Verification"])
 
 
-# --- Manual wiring (composition root) --------------------------------------
-# The default V1 service: local Tesseract extractor + exact-equality validator,
-# wired by hand. No DI framework, factory, or registry. Tests can substitute a
-# service via FastAPI's dependency_overrides on `get_verification_service`.
+# Composition root. Tests override the default service via
+# dependency_overrides on get_verification_service.
 _default_service = InvoiceVerificationService(
     extractor=build_default_extractor(),
     validator=AmountValidator(),
@@ -42,12 +40,10 @@ async def verify_invoice(
     expected_amount: Decimal = Form(...),
     service: InvoiceVerificationService = Depends(get_verification_service),
 ) -> VerificationResponse:
-    """Verify that the uploaded invoice's total matches the expected amount.
+    """Verify the uploaded invoice total against expected_amount.
 
-    The API layer only: reads the file bytes and MIME type, delegates the
-    workflow to the service, and maps the domain result to the transport
-    model. A business mismatch is a successful verification (HTTP 200 with
-    matched=false); extraction failures map to the error taxonomy.
+    A business mismatch is still HTTP 200 (matched=false); extraction
+    failures map to the error taxonomy below.
     """
     file_bytes = await invoice_file.read()
     mime_type = invoice_file.content_type

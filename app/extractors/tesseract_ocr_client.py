@@ -8,20 +8,10 @@ logger = get_logger(__name__)
 
 
 class TesseractOcrClient(OcrClient):
-    """Local, self-contained OCR implementation backed by Tesseract.
-
-    Chosen for V1 so the service runs after a clone without any cloud
-    credentials. Requires the `tesseract` binary plus `pytesseract`,
-    `Pillow`, and `PyMuPDF` (see requirements.txt).
-
-    - Images (JPEG/PNG) are OCR'd directly.
-    - PDFs use embedded text when present (fast, exact) and fall back to
-      rasterizing each page and OCR'ing it when the page has no text layer.
-
-    Heavy dependencies are imported lazily inside the methods so that the
-    extractor and its unit tests (which inject a fake OCR client) do not
-    require Tesseract or PyMuPDF to be installed.
-    """
+    """OCR backed by local Tesseract. Requires the `tesseract` binary plus
+    pytesseract/Pillow/PyMuPDF. PDFs use their embedded text layer when
+    present, otherwise each page is rasterized and OCR'd. Heavy deps are
+    imported lazily so fake-OCR unit tests don't need them installed."""
 
     def __init__(self, tesseract_lang: str = "eng", render_dpi: int = 300):
         self._lang = tesseract_lang
