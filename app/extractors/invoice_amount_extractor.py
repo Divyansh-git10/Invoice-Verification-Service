@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
@@ -139,6 +140,38 @@ def words_to_amount(phrase: str) -> Optional[Decimal]:
     return Decimal(total).quantize(Decimal("0.01"))
 
 
+@dataclass(frozen=True)
+class LabelledCandidate:
+    """A total-keyword line: its label (matched keyword), the amount on that
+    line, the source line, the keyword priority (lower = more authoritative,
+    per _TOTAL_KEYWORDS order), the line's position in the OCR, and a small
+    window of surrounding OCR lines for section context."""
+
+    label: str
+    amount: Decimal
+    line: str
+    priority: int
+    line_index: int = -1
+    context: str = ""
+
+
+@dataclass(frozen=True)
+class DeterministicOutcome:
+    """Result of deterministic extraction. `confident` is True only for
+    keyword-labelled or amount-in-words totals; the keyword-less fallback and
+    the no-result case are not confident. `ocr_text`, `candidates`, and the
+    labelled metadata are carried so a downstream resolver need not re-run OCR."""
+
+    amount: Optional[Decimal]
+    confident: bool
+    ocr_text: str
+    candidates: list[Decimal]
+    labelled_candidates: list[LabelledCandidate]
+    winner_label: Optional[str]
+    winner_priority: Optional[int]
+    amount_in_words: Optional[Decimal]
+
+
 class InvoiceAmountExtractor:
     """Extraction pipeline: validate input, OCR (via the injected OcrClient),
     identify the invoice total, and normalize it to a Decimal."""
@@ -163,29 +196,52 @@ class InvoiceAmountExtractor:
             else settings.MAX_FILE_SIZE_MB
         )
 
-    def extract(self, file_bytes: bytes, mime_type: str) -> ExtractedAmount:
-        """Extract the invoice total from a document.
+    def resolve(self, file_bytes: bytes, mime_type: str) -> DeterministicOutcome:
+        """Validate, OCR (once), and deterministically identify the total,
+        reporting whether the result is confident along with the OCR text and
+        monetary candidates. Does not raise when no total is found.
 
         Raises:
-            UnsupportedFileTypeException: MIME type not allowed.
-            FileTooLargeException: Document exceeds the configured size.
-            ExtractionException: Empty/unreadable document.
-            OcrExecutionException: OCR engine failure.
-            AmountNotFoundException: No invoice total could be identified.
+            UnsupportedFileTypeException / FileTooLargeException /
+            ExtractionException / OcrExecutionException on input/OCR failure.
         """
         self._validate_mime(mime_type)
         self._validate_size(file_bytes)
 
         text = self._run_ocr(file_bytes, mime_type)
+        words = self._amount_from_words(text)
+        amount, confident, labelled, winner_label, winner_priority = (
+            self._identify_total(text, words)
+        )
+        candidates = self._amounts_in(text, _STRICT_AMOUNT)
 
-        amount = self._identify_total(text)
-        if amount is None:
+        if amount is not None:
+            logger.info("Deterministic total: %s (confident=%s)", amount, confident)
+        return DeterministicOutcome(
+            amount=amount,
+            confident=confident,
+            ocr_text=text,
+            candidates=candidates,
+            labelled_candidates=labelled,
+            winner_label=winner_label,
+            winner_priority=winner_priority,
+            amount_in_words=words,
+        )
+
+    def extract(self, file_bytes: bytes, mime_type: str) -> ExtractedAmount:
+        """Extract the invoice total.
+
+        Raises:
+            UnsupportedFileTypeException / FileTooLargeException /
+            ExtractionException / OcrExecutionException on input/OCR failure;
+            AmountNotFoundException when no total is identified.
+        """
+        outcome = self.resolve(file_bytes, mime_type)
+        if outcome.amount is None:
             raise AmountNotFoundException(
                 "Unable to identify the invoice total in the document"
             )
-
-        logger.info("Identified invoice total: %s", amount)
-        return ExtractedAmount(amount=amount)
+        return ExtractedAmount(amount=outcome.amount)
 
     def _validate_mime(self, mime_type: str) -> None:
         if mime_type not in self._supported_mime_types:
@@ -217,11 +273,18 @@ class InvoiceAmountExtractor:
 
         return text or ""
 
-    def _identify_total(self, text: str) -> Optional[Decimal]:
+    def _identify_total(
+        self, text: str, words: Optional[Decimal]
+    ) -> tuple[
+        Optional[Decimal], bool, list["LabelledCandidate"], Optional[str], Optional[int]
+    ]:
         best_priority: Optional[int] = None
         best_amount: Optional[Decimal] = None
+        best_label: Optional[str] = None
+        labelled: list[LabelledCandidate] = []
 
-        for line in text.splitlines():
+        lines = text.splitlines()
+        for idx, line in enumerate(lines):
             lowered = line.lower()
             for priority, keyword in enumerate(_TOTAL_KEYWORDS):
                 if keyword in lowered:
@@ -233,31 +296,54 @@ class InvoiceAmountExtractor:
                         break
 
                     amounts = self._amounts_in(line, _LOOSE_AMOUNT)
-                    if amounts and (
-                        best_priority is None or priority < best_priority
-                    ):
+                    if amounts:
                         # On a total line, the total is the largest figure
                         # (e.g. it exceeds any per-item value on that line).
-                        best_priority = priority
-                        best_amount = max(amounts)
+                        line_total = max(amounts)
+                        labelled.append(
+                            LabelledCandidate(
+                                label=keyword,
+                                amount=line_total,
+                                line=line.strip(),
+                                priority=priority,
+                                line_index=idx,
+                                context=self._context_window(lines, idx),
+                            )
+                        )
+                        if best_priority is None or priority < best_priority:
+                            best_priority = priority
+                            best_amount = line_total
+                            best_label = keyword
                     break  # highest-priority keyword on this line wins
 
         if best_amount is not None:
-            return best_amount
+            # Confident only when the explicit labelled totals agree. Competing
+            # labelled totals with different values are ambiguous and escalate
+            # to the resolver. The extracted amount (the winner) is unchanged;
+            # only the confidence flag differs. Decimal equality is exact here
+            # (no fuzzy/approximate comparison, no arithmetic).
+            confident = len({c.amount for c in labelled}) <= 1
+            if not confident:
+                logger.info(
+                    "Ambiguous labelled totals %s; winner=%s",
+                    [str(c.amount) for c in labelled],
+                    best_amount,
+                )
+            return best_amount, confident, labelled, best_label, best_priority
 
         # Amount-in-words fallback: used only when no labelled numeric total
         # was found, so it never overrides a reliable printed figure.
-        worded = self._amount_from_words(text)
-        if worded is not None:
-            return worded
+        if words is not None:
+            return words, True, labelled, None, None
 
         # Keyword-less fallback: the largest clearly-monetary figure found.
+        # This is a low-confidence guess (not a labelled/worded total).
         fallback = self._amounts_in(text, _STRICT_AMOUNT)
         if fallback:
             logger.info("No total keyword found; using largest monetary value")
-            return max(fallback)
+            return max(fallback), False, labelled, None, None
 
-        return None
+        return None, False, labelled, None, None
 
     def _amount_from_words(self, text: str) -> Optional[Decimal]:
         """Amount-in-words fallback (None if nothing parses). Detector 1: an
@@ -319,6 +405,30 @@ class InvoiceAmountExtractor:
             except ValueError:
                 continue
         return amounts
+
+    @staticmethod
+    def _context_window(lines: list[str], index: int, radius: int = 2) -> str:
+        """A small window around `index`: the line plus up to `radius` non-empty
+        OCR lines on each side, so a candidate carries its local section context
+        (e.g. nearby CGST/SGST/HSN headers that mark a tax-summary section)."""
+        before: list[str] = []
+        j = index - 1
+        while j >= 0 and len(before) < radius:
+            stripped = lines[j].strip()
+            if stripped:
+                before.append(stripped)
+            j -= 1
+        before.reverse()
+
+        after: list[str] = []
+        j = index + 1
+        while j < len(lines) and len(after) < radius:
+            stripped = lines[j].strip()
+            if stripped:
+                after.append(stripped)
+            j += 1
+
+        return " | ".join(before + [lines[index].strip()] + after)
 
 
 def build_default_extractor() -> InvoiceAmountExtractor:

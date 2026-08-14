@@ -3,6 +3,7 @@ uvicorn[standard]
 python-multipart
 pydantic
 pydantic-settings
+httpx
 
 # OCR (V1: local, self-contained — no cloud credentials required)
 pytesseract

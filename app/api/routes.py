@@ -12,17 +12,21 @@ from app.core.exceptions import (
     UnsupportedFileTypeException,
 )
 from app.extractors.invoice_amount_extractor import build_default_extractor
+from app.resolvers.llm_amount_resolver import build_default_resolver
 from app.services.invoice_verification_service import InvoiceVerificationService
 from app.validators.amount_validator import AmountValidator
 
 router = APIRouter(prefix="/verify", tags=["Invoice Verification"])
 
 
-# Composition root. Tests override the default service via
-# dependency_overrides on get_verification_service.
+# Composition root. The resolver is wired only when GROQ_API_KEY is set,
+# otherwise it is None and the pipeline stays deterministic-only. Tests
+# override the default service via dependency_overrides on
+# get_verification_service.
 _default_service = InvoiceVerificationService(
     extractor=build_default_extractor(),
     validator=AmountValidator(),
+    resolver=build_default_resolver(),
 )
 
 
