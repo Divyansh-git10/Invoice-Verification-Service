@@ -77,7 +77,7 @@ def test_context_is_passed_to_resolver():
 
 def test_13jpg_style_keep_retains_invoice_total():
     # With the richer context the model should keep; keep -> deterministic 1525.
-    stub = StubResolver('{"decision":"keep","amount":null,"confidence":0.0,"evidence":null}')
+    stub = StubResolver('{"selected_amount":null,"confidence":0.0,"evidence":null}')
     result = _service(INVOICE_VS_TAX_OCR, stub).verify(b"%PDF", PDF, Decimal("1525.00"))
     assert result.matched is True
     assert result.actual_amount == Decimal("1525.00")
@@ -85,7 +85,7 @@ def test_13jpg_style_keep_retains_invoice_total():
 
 def test_13jpg_override_to_winner_is_kept():
     # Even if the model 'overrides' to the winner value, gate 5 keeps 1525.
-    stub = StubResolver('{"decision":"override","amount":"1525.00","confidence":0.9,"evidence":"TOTAL ... 1525.00"}')
+    stub = StubResolver('{"selected_amount":"1525.00","confidence":0.9,"evidence":"TOTAL ... 1525.00"}')
     result = _service(INVOICE_VS_TAX_OCR, stub).verify(b"%PDF", PDF, Decimal("1525.00"))
     assert result.actual_amount == Decimal("1525.00")
 
@@ -96,7 +96,7 @@ def test_8jpg_protection_still_intact_with_context():
         "Total Amounts (INR) 38,991.00 8,933.68 47,924.68\n"
         "Invoice Total (in figures): INR 47,925.00"
     )
-    stub = StubResolver('{"decision":"override","amount":"47924.68","confidence":1.0,"evidence":"Total Amounts 47,924.68"}')
+    stub = StubResolver('{"selected_amount":"47924.68","confidence":1.0,"evidence":"Total Amounts 47,924.68"}')
     result = _service(ocr, stub).verify(b"%PDF", PDF, Decimal("47925.00"))
     assert result.actual_amount == Decimal("47925.00")  # lower-priority override rejected
 

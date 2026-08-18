@@ -38,7 +38,7 @@ def test_case4_lower_priority_final_amount_is_accepted():
         ],
         candidates=[Decimal("3988.00"), Decimal("3988.40")],
     )
-    raw = '{"decision":"override","amount":"3988.40","confidence":0.9,"evidence":"Total| ... 3,988.40"}'
+    raw = '{"selected_amount":"3988.40","confidence":0.9,"evidence":"Total| ... 3,988.40"}'
     assert StubResolver(raw).resolve(context).amount == Decimal("3988.40")
 
 
@@ -52,7 +52,7 @@ def test_case8_authoritative_winner_rejects_rollup():
         ],
         candidates=[Decimal("47925.00"), Decimal("47924.68")],
     )
-    raw = '{"decision":"override","amount":"47924.68","confidence":1.0,"evidence":"Total Amounts 47,924.68"}'
+    raw = '{"selected_amount":"47924.68","confidence":1.0,"evidence":"Total Amounts 47,924.68"}'
     assert StubResolver(raw).resolve(context).amount is None
 
 
@@ -70,7 +70,7 @@ def test_case13_equal_priority_tax_context_rejected():
         ],
         candidates=[Decimal("1525.00"), Decimal("1500.00")],
     )
-    raw = '{"decision":"override","amount":"1500.00","confidence":0.99,"evidence":"Total Rs. 1500.00"}'
+    raw = '{"selected_amount":"1500.00","confidence":0.99,"evidence":"Total Rs. 1500.00"}'
     assert StubResolver(raw).resolve(context).amount is None
 
 
@@ -80,7 +80,7 @@ def test_ungrounded_amount_rejected():
         winner=Decimal("1000.00"), winner_label="total amount", winner_priority=10,
         labelled=[cand("total", "900.00", 11)], candidates=[Decimal("1000.00"), Decimal("900.00")],
     )
-    raw = '{"decision":"override","amount":"55555.00","confidence":0.99,"evidence":"x"}'
+    raw = '{"selected_amount":"55555.00","confidence":0.99,"evidence":"x"}'
     assert StubResolver(raw).resolve(context).amount is None
 
 
@@ -90,7 +90,7 @@ def test_low_confidence_rejected():
         winner=Decimal("1000.00"), winner_label="total amount", winner_priority=10,
         labelled=[cand("total", "900.00", 11)], candidates=[Decimal("1000.00"), Decimal("900.00")],
     )
-    raw = '{"decision":"override","amount":"900.00","confidence":0.5,"evidence":"Total 900"}'
+    raw = '{"selected_amount":"900.00","confidence":0.5,"evidence":"Total 900"}'
     assert StubResolver(raw).resolve(context).amount is None
 
 
@@ -100,7 +100,7 @@ def test_missing_evidence_rejected():
         winner=Decimal("1000.00"), winner_label="total amount", winner_priority=10,
         labelled=[cand("total", "900.00", 11)], candidates=[Decimal("1000.00"), Decimal("900.00")],
     )
-    raw = '{"decision":"override","amount":"900.00","confidence":0.9,"evidence":""}'
+    raw = '{"selected_amount":"900.00","confidence":0.9,"evidence":""}'
     assert StubResolver(raw).resolve(context).amount is None
 
 
@@ -112,7 +112,7 @@ def test_timeout_keeps_deterministic():
 
 # H. Confident deterministic result -> resolver never called.
 def test_confident_bypasses_resolver():
-    stub = StubResolver('{"decision":"override","amount":"9999","confidence":1.0,"evidence":"x"}')
+    stub = StubResolver('{"selected_amount":"9999","confidence":1.0,"evidence":"x"}')
     extractor = InvoiceAmountExtractor(FakeOcrClient(text="Grand Total Rs. 18,750.00"), AmountNormalizer())
     service = InvoiceVerificationService(extractor, AmountValidator(), resolver=stub)
     result = service.verify(b"%PDF", PDF, Decimal("18750.00"))
@@ -126,7 +126,7 @@ def test_lower_priority_insufficient_evidence_rejected():
         winner=Decimal("1000.00"), winner_label="total amount", winner_priority=10,
         labelled=[cand("total", "900.00", 11)], candidates=[Decimal("1000.00"), Decimal("900.00")],
     )
-    raw = '{"decision":"override","amount":"900.00","confidence":0.4,"evidence":"Total 900"}'
+    raw = '{"selected_amount":"900.00","confidence":0.4,"evidence":"Total 900"}'
     assert StubResolver(raw).resolve(context).amount is None
 
 
@@ -140,7 +140,7 @@ def test_higher_authority_override_accepted():
         ],
         candidates=[Decimal("1000.00"), Decimal("1200.00")],
     )
-    raw = '{"decision":"override","amount":"1200.00","confidence":0.9,"evidence":"Invoice Amount 1200"}'
+    raw = '{"selected_amount":"1200.00","confidence":0.9,"evidence":"Invoice Amount 1200"}'
     assert StubResolver(raw).resolve(context).amount == Decimal("1200.00")
 
 
@@ -154,5 +154,5 @@ def test_equal_priority_clean_override_allowed():
         ],
         candidates=[Decimal("1000.00"), Decimal("1200.00")],
     )
-    raw = '{"decision":"override","amount":"1200.00","confidence":0.9,"evidence":"Grand Total 1200"}'
+    raw = '{"selected_amount":"1200.00","confidence":0.9,"evidence":"Grand Total 1200"}'
     assert StubResolver(raw).resolve(context).amount == Decimal("1200.00")

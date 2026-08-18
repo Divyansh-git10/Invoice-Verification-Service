@@ -54,6 +54,21 @@ _SUBORDINATE_MARKERS = (
     "igst",
 )
 
+# Column-name keywords that mark a line-item table's header row. Used only to
+# flag whether a candidate sits in such a table's totals row (structural
+# metadata; no arithmetic, no digit correction).
+_TABLE_HEADER_KEYWORDS = (
+    "hsn",
+    "sac",
+    "qty",
+    "quantity",
+    "rate",
+    "taxable",
+    "description",
+    "unit",
+    "amount",
+)
+
 # Money token for lines that already matched a total keyword. The comma-grouped
 # alternative requires >=1 comma so an un-grouped integer falls through to the
 # plain alternative and is matched in full (not truncated to its first 3 digits).
@@ -98,6 +113,10 @@ _WORDS_TRIGGER = re.compile(r"in\s+words?\b", re.IGNORECASE)
 _WORDS_CURRENCY_ANCHOR = re.compile(
     r"(?:₹|rs\.?|rupees|inr)\s+(.*?)\bonly\b", re.IGNORECASE
 )
+# Generic amount-in-words terminated by "only"/"paisa only", with no currency
+# or "in words" prefix (e.g. "Nine Hundred Sixty-eight And Zero Paisa Only").
+# Used only as corroboration and always cross-grounded before it is trusted.
+_WORDS_ONLY_PHRASE = re.compile(r"([A-Za-z][A-Za-z \-]*?)\bonly\b", re.IGNORECASE)
 # Split camelCase / PascalCase runs like "ThirtyEight" -> "Thirty Eight".
 _CAMEL_SPLIT = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
@@ -153,6 +172,7 @@ class LabelledCandidate:
     priority: int
     line_index: int = -1
     context: str = ""
+    in_table_total: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,9 +229,13 @@ class InvoiceAmountExtractor:
         self._validate_size(file_bytes)
 
         text = self._run_ocr(file_bytes, mime_type)
-        words = self._amount_from_words(text)
+        # words_winner drives the deterministic winner (unchanged behaviour);
+        # words_corroborated is a cross-grounded value used only for routing and
+        # arbitration - it never changes the winner.
+        words_winner = self._amount_from_words(text)
+        words_corroborated = self._corroborated_words(text)
         amount, confident, labelled, winner_label, winner_priority = (
-            self._identify_total(text, words)
+            self._identify_total(text, words_winner, words_corroborated)
         )
         candidates = self._amounts_in(text, _STRICT_AMOUNT)
 
@@ -225,7 +249,7 @@ class InvoiceAmountExtractor:
             labelled_candidates=labelled,
             winner_label=winner_label,
             winner_priority=winner_priority,
-            amount_in_words=words,
+            amount_in_words=words_corroborated,
         )
 
     def extract(self, file_bytes: bytes, mime_type: str) -> ExtractedAmount:
@@ -274,7 +298,10 @@ class InvoiceAmountExtractor:
         return text or ""
 
     def _identify_total(
-        self, text: str, words: Optional[Decimal]
+        self,
+        text: str,
+        words_winner: Optional[Decimal],
+        words_corroborated: Optional[Decimal],
     ) -> tuple[
         Optional[Decimal], bool, list["LabelledCandidate"], Optional[str], Optional[int]
     ]:
@@ -307,6 +334,7 @@ class InvoiceAmountExtractor:
                                 line=line.strip(),
                                 priority=priority,
                                 line_index=idx,
+                                in_table_total=self._is_table_total_row(lines, idx, line),
                                 context=self._context_window(lines, idx),
                             )
                         )
@@ -323,9 +351,24 @@ class InvoiceAmountExtractor:
             # only the confidence flag differs. Decimal equality is exact here
             # (no fuzzy/approximate comparison, no arithmetic).
             confident = len({c.amount for c in labelled}) <= 1
+            # A cross-grounded amount-in-words value that disagrees with the sole
+            # labelled winner makes the outcome ambiguous (routing only; the
+            # winner amount is unchanged).
+            if (
+                confident
+                and words_corroborated is not None
+                and words_corroborated != best_amount
+            ):
+                confident = False
+                logger.info(
+                    "Corroborated amount-in-words %s conflicts with labelled "
+                    "winner %s; escalating",
+                    words_corroborated,
+                    best_amount,
+                )
             if not confident:
                 logger.info(
-                    "Ambiguous labelled totals %s; winner=%s",
+                    "Ambiguous total; labelled=%s winner=%s",
                     [str(c.amount) for c in labelled],
                     best_amount,
                 )
@@ -333,8 +376,8 @@ class InvoiceAmountExtractor:
 
         # Amount-in-words fallback: used only when no labelled numeric total
         # was found, so it never overrides a reliable printed figure.
-        if words is not None:
-            return words, True, labelled, None, None
+        if words_winner is not None:
+            return words_winner, True, labelled, None, None
 
         # Keyword-less fallback: the largest clearly-monetary figure found.
         # This is a low-confidence guess (not a labelled/worded total).
@@ -397,6 +440,34 @@ class InvoiceAmountExtractor:
 
         return None
 
+    def _words_only_phrase(self, text: str) -> Optional[Decimal]:
+        """Detector 3: a number-words phrase terminated by 'only'/'paisa only'
+        with no currency or 'in words' prefix. Value is not trusted until it is
+        cross-grounded (see `_corroborated_words`)."""
+        for line in text.splitlines():
+            match = _WORDS_ONLY_PHRASE.search(line)
+            if not match:
+                continue
+            value = words_to_amount(match.group(1))
+            if value is not None:
+                return value
+        return None
+
+    def _corroborated_words(self, text: str) -> Optional[Decimal]:
+        """A cross-grounded amount-in-words value: parsed from any words detector
+        AND also present as a numeric monetary token in the OCR. Used only for
+        routing/arbitration; it never changes the deterministic winner. Returns
+        None when the parsed value does not appear numerically (mandatory
+        cross-grounding, guards against a hallucinated word parse)."""
+        value = self._amount_from_words(text)
+        if value is None:
+            value = self._words_only_phrase(text)
+        if value is None:
+            return None
+        if value in set(self._amounts_in(text, _STRICT_AMOUNT)):
+            return value
+        return None
+
     def _amounts_in(self, text: str, pattern: re.Pattern) -> list[Decimal]:
         amounts: list[Decimal] = []
         for match in pattern.finditer(text):
@@ -405,6 +476,19 @@ class InvoiceAmountExtractor:
             except ValueError:
                 continue
         return amounts
+
+    def _is_table_total_row(self, lines: list[str], index: int, line: str) -> bool:
+        """True when the candidate is the Total-column value of a line-item
+        table's totals row: the line is columnar (>=2 monetary tokens) and a
+        table header (a line with >=2 column-name keywords) appears above it.
+        Structural only - no arithmetic, no digit correction."""
+        if len(self._amounts_in(line, _LOOSE_AMOUNT)) < 2:
+            return False
+        for j in range(index):
+            lowered = lines[j].lower()
+            if sum(1 for kw in _TABLE_HEADER_KEYWORDS if kw in lowered) >= 2:
+                return True
+        return False
 
     @staticmethod
     def _context_window(lines: list[str], index: int, radius: int = 2) -> str:
