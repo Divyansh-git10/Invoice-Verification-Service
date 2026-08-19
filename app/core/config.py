@@ -9,6 +9,10 @@ class Settings(BaseSettings):
 
     MAX_FILE_SIZE_MB: int = 10
 
+    # Persistence (optional). Set -> verification results are stored in Postgres;
+    # unset -> persistence is skipped (local dev / tests run without a database).
+    DATABASE_URL: Optional[str] = None
+
     SUPPORTED_MIME_TYPES: tuple[str, ...] = (
         "application/pdf",
         "image/jpeg",

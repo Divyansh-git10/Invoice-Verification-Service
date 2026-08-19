@@ -14,6 +14,9 @@ from app.validators.amount_validator import AmountValidator
 
 logger = get_logger(__name__)
 
+# The V1 pipeline uses local Tesseract OCR. Recorded for audit/persistence only.
+_OCR_METHOD = "tesseract"
+
 
 class InvoiceVerificationService:
     """Orchestrates extraction then validation. An optional AmountResolver is
@@ -41,27 +44,44 @@ class InvoiceVerificationService:
     ) -> ValidationResult:
         if self._resolver is None:
             extracted = self._extractor.extract(file_bytes, mime_type)
-            return self._validator.validate(expected_amount, extracted.amount)
+            result = self._validator.validate(expected_amount, extracted.amount)
+            # Deterministic-only path: confidence flag isn't surfaced by extract().
+            result.confident = None
+            result.llm_used = False
+            result.ocr_method = _OCR_METHOD
+            result.llm_confidence = None
+            return result
 
         outcome = self._extractor.resolve(file_bytes, mime_type)
-        actual = self._resolve_amount(outcome)
+        actual, llm_used, llm_confidence = self._resolve_amount(outcome)
         if actual is None:
             raise AmountNotFoundException(
                 "Unable to identify the invoice total in the document"
             )
-        return self._validator.validate(expected_amount, actual)
+        result = self._validator.validate(expected_amount, actual)
+        result.confident = outcome.confident
+        result.llm_used = llm_used
+        result.ocr_method = _OCR_METHOD
+        result.llm_confidence = llm_confidence
+        return result
 
-    def _resolve_amount(self, outcome: DeterministicOutcome) -> Optional[Decimal]:
+    def _resolve_amount(
+        self, outcome: DeterministicOutcome
+    ) -> tuple[Optional[Decimal], bool, Optional[float]]:
+        """Returns (amount, llm_used, llm_confidence). Decision logic is
+        unchanged; the extra fields are audit metadata only. `llm_used` is True
+        whenever the resolver is consulted (i.e. the deterministic result was not
+        confident); `llm_confidence` is set only when an override was accepted."""
         if outcome.confident and outcome.amount is not None:
-            return outcome.amount
+            return outcome.amount, False, None
 
-        resolved = self._safe_resolve(outcome)
+        resolved = self._safe_resolve(outcome)  # LLM fallback consulted here
         if resolved is not None and resolved.amount is not None:
-            return resolved.amount
+            return resolved.amount, True, resolved.confidence
 
         # Resolver kept / failed: retain the deterministic winner, which may be
         # a low-confidence figure or None (-> AmountNotFound).
-        return outcome.amount
+        return outcome.amount, True, None
 
     def _safe_resolve(self, outcome: DeterministicOutcome) -> Optional[ResolvedAmount]:
         try:

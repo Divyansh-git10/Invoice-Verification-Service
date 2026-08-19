@@ -9,3 +9,7 @@ httpx
 pytesseract
 Pillow
 PyMuPDF
+
+# Persistence (optional at runtime via DATABASE_URL; Railway Postgres compatible)
+SQLAlchemy>=2.0
+psycopg2-binary
